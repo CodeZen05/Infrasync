@@ -1,0 +1,249 @@
+// Prisma Schema for InfraSync
+// Enterprise Infrastructure Project Progress Tracking Platform
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------------
+// ENUMS
+// ------------------------------------------------------------
+
+enum Role {
+  PROJECT_MANAGER
+  SITE_ENGINEER
+}
+
+enum ProjectStatus {
+  PLANNED
+  ACTIVE
+  COMPLETED
+  ON_HOLD
+}
+
+enum ActivityStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  DELAYED
+}
+
+enum ProgressStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum EvidenceType {
+  PHOTO
+  DPR
+  DOCUMENT
+  VIDEO
+}
+
+enum AiStatus {
+  NOT_ANALYZED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum ReviewStatus {
+  PENDING_REVIEW
+  CONFIRMED
+  EDITED_AND_CONFIRMED
+  REJECTED
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+// ------------------------------------------------------------
+// MODELS
+// ------------------------------------------------------------
+
+model User {
+  id                 String           @id @default(uuid())
+  name               String
+  email              String           @unique
+  passwordHash       String
+  role               Role
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  // Relationships
+  managedProjects    Project[]        @relation("ManagedProjects")
+  memberships        ProjectMember[]
+  submittedUpdates   ProgressUpdate[] @relation("SubmittedUpdates")
+  reviewedUpdates    ProgressUpdate[] @relation("ReviewedUpdates")
+  assignedActivities Activity[]       @relation("AssignedActivities")
+  siteEvidences      SiteEvidence[]   @relation("UploadedSiteEvidences")
+  reviewedEvidences  SiteEvidence[]   @relation("ReviewedSiteEvidences")
+
+  @@index([email])
+  @@index([role])
+}
+
+model Project {
+  id          String         @id @default(uuid())
+  name        String
+  location    String?
+  description String?
+  startDate   DateTime?
+  endDate     DateTime?
+  status      ProjectStatus  @default(PLANNED)
+  managerId   String
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  // Relationships
+  manager     User           @relation("ManagedProjects", fields: [managerId], references: [id], onDelete: Restrict)
+  members     ProjectMember[]
+  activities  Activity[]
+
+  @@index([managerId])
+  @@index([status])
+}
+
+model ProjectMember {
+  id        String   @id @default(uuid())
+  projectId String
+  userId    String
+  createdAt DateTime @default(now())
+
+  // Relationships
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+  @@index([projectId])
+}
+
+model Activity {
+  id              String           @id @default(uuid())
+  projectId       String
+  activityCode    String
+  name            String
+  wbs             String?
+  description     String?
+  plannedStart    DateTime?
+  plannedEnd      DateTime?
+  plannedQuantity Float?
+  actualQuantity  Float?           @default(0)
+  unit            String?
+  status          ActivityStatus   @default(NOT_STARTED)
+  assignedToId    String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  // Relationships
+  project         Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assignedTo      User?            @relation("AssignedActivities", fields: [assignedToId], references: [id], onDelete: SetNull)
+  progressUpdates ProgressUpdate[]
+  siteEvidences   SiteEvidence[]
+  risks           Risk[]
+
+  @@index([projectId])
+  @@index([activityCode])
+  @@index([status])
+  @@index([assignedToId])
+}
+
+model ProgressUpdate {
+  id               String         @id @default(uuid())
+  activityId       String
+  submittedById    String
+  actualQuantity   Float
+  actualPercentage Float?
+  remarks          String?
+  status           ProgressStatus @default(PENDING)
+  reviewRemarks    String?
+  reviewedAt       DateTime?
+  reviewedById     String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  // Relationships
+  activity         Activity       @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  submittedBy      User           @relation("SubmittedUpdates", fields: [submittedById], references: [id], onDelete: Restrict)
+  reviewedBy       User?          @relation("ReviewedUpdates", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([activityId])
+  @@index([submittedById])
+  @@index([status])
+  @@index([reviewedById])
+}
+
+model SiteEvidence {
+  id                   String       @id @default(uuid())
+  activityId           String?
+  uploadedById         String
+  fileUrl              String
+  fileName             String?
+  fileType             String?
+  evidenceType         EvidenceType
+  capturedDate         DateTime     @default(now())
+  description          String?
+
+  // AI Extraction Fields
+  aiStatus             AiStatus     @default(NOT_ANALYZED)
+  aiRawResponse        String?      @db.Text
+  aiConfidence         Int?
+  aiExtractedActivity  String?
+  aiExtractedLocation  String?
+  aiExtractedQuantity  Float?
+  aiExtractedUnit      String?
+  aiExtractedProgress  Float?
+  aiExtractedStatus    String?
+  aiIssues             String?      @db.Text
+  aiRemarks            String?      @db.Text
+  aiMaterials          String?      @db.Text
+  aiManpower           String?
+  aiEquipment          String?
+
+  // Human Review Lifecycle Fields
+  reviewStatus         ReviewStatus @default(PENDING_REVIEW)
+  reviewedById         String?
+  reviewedAt           DateTime?
+
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt @default(now())
+
+  // Relationships
+  activity             Activity?    @relation(fields: [activityId], references: [id], onDelete: SetNull)
+  uploadedBy           User         @relation("UploadedSiteEvidences", fields: [uploadedById], references: [id], onDelete: Restrict)
+  reviewedBy           User?        @relation("ReviewedSiteEvidences", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([activityId])
+  @@index([uploadedById])
+  @@index([evidenceType])
+  @@index([aiStatus])
+  @@index([reviewStatus])
+}
+
+model Risk {
+  id             String    @id @default(uuid())
+  activityId     String
+  riskLevel      RiskLevel @default(LOW)
+  probability    Float?
+  estimatedDelay String?
+  cause          String?
+  recommendation String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  // Relationships
+  activity       Activity  @relation(fields: [activityId], references: [id], onDelete: Cascade)
+
+  @@index([activityId])
+  @@index([riskLevel])
+}
